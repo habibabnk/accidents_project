@@ -23,6 +23,15 @@ except Exception:
             return lambda f: f
         return func
 
+# Import deployment data handler
+try:
+    from deploy_data import load_sample_data, check_local_data
+except ImportError:
+    def load_sample_data():
+        return pd.DataFrame()
+    def check_local_data():
+        return False
+
 warnings.filterwarnings('ignore')
 
 class AccidentDataLoader:
@@ -94,6 +103,12 @@ class AccidentDataLoader:
         """Load all yearly accident data"""
         all_data = []
         
+        # Check if we're in deployment (no local data)
+        if not check_local_data():
+            print("No local data found, loading sample data for deployment")
+            self.data = load_sample_data()
+            return self.data
+        
         for year in range(2015, 2025):
             year_dir = self.data_dir / str(year)
             
@@ -129,7 +144,10 @@ class AccidentDataLoader:
             print(f"Total records loaded: {len(self.data)}")
             return self.data
         else:
-            raise ValueError("No data could be loaded from any year")
+            # Fallback to sample data if no local data found
+            print("No local data found, loading sample data")
+            self.data = load_sample_data()
+            return self.data
     
     def load_detailed_tables(self):
         """Load detailed tables for recent years (2021-2024)"""
