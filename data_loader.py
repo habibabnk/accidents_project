@@ -1,359 +1,272 @@
 import pandas as pd
-import numpy as np
-import os
-import glob
-from pathlib import Path
 import warnings
+from pathlib import Path
 
-# Safe Streamlit imports with fallback
-cache_data = None
-cache_resource = None
+warnings.filterwarnings("ignore")
+
 try:
     import streamlit as st
     cache_data = st.cache_data
-    cache_resource = st.cache_resource
 except Exception:
-    st = None
-    def cache_data(func=None, **kwargs):
-        if func is None:
-            return lambda f: f
-        return func
-    def cache_resource(func=None, **kwargs):
-        if func is None:
-            return lambda f: f
-        return func
+    def cache_data(func=None, **_):
+        return func if func else lambda f: f
 
-# Import deployment data handler
-try:
-    from deploy_data import load_sample_data, check_local_data
-except ImportError:
-    def load_sample_data():
-        return pd.DataFrame()
-    def check_local_data():
-        return False
-
-warnings.filterwarnings('ignore')
 
 class AccidentDataLoader:
-    def __init__(self, data_dir="accidents_project"):
-        self.data_dir = Path(data_dir)
-        self.data = None
-        self.merged_data = None
+    def __init__(self, data_dir=None):
+        self.data_dir    = Path(data_dir) if data_dir else self._find_data_dir()
         self.loading_errors = []
-        
-    def smart_read_csv(self, file_path):
-        """Robust CSV reader that tries multiple separators and encodings"""
-        separators = [";", ","]
-        encodings = ["utf-8", "utf-8-sig", "latin-1"]
-        
-        for sep in separators:
-            for enc in encodings:
+
+    def _find_data_dir(self):
+        for candidate in [
+            Path(__file__).parent,
+            Path(__file__).parent / "accidents_project",
+            Path.cwd(),
+            Path.cwd() / "accidents_project",
+        ]:
+            if any((candidate / str(y)).exists() for y in range(2015, 2025)):
+                return candidate
+        return Path(__file__).parent
+
+    # ── CSV reader ────────────────────────────────────────────────────────────
+    def smart_read_csv(self, fp):
+        fp = Path(fp)
+        for sep in [";", ","]:
+            for enc in ["utf-8", "utf-8-sig", "latin-1", "cp1252"]:
                 try:
-                    df = pd.read_csv(file_path, sep=sep, encoding=enc, low_memory=False)
-                    return df
-                except Exception as e:
-                    last_error = e
+                    df = pd.read_csv(fp, sep=sep, encoding=enc,
+                                     low_memory=False, on_bad_lines="skip")
+                    if df.shape[1] > 1:
+                        return df
+                except Exception:
                     continue
-        
-        # If all attempts failed, raise with detailed error
-        raise RuntimeError(f"Failed reading {file_path}: {last_error}")
-        
-    def detect_separator(self, file_path):
-        """Detect CSV separator by reading first line"""
-        try:
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                first_line = f.readline()
-                if ';' in first_line and ',' not in first_line:
-                    return ';'
-                elif ',' in first_line and ';' not in first_line:
-                    return ','
-                else:
-                    return ';'  # Default for French data
-        except:
-            return ';'
-    
-    def detect_encoding(self, file_path):
-        """Try different encodings"""
-        encodings = ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']
-        for encoding in encodings:
-            try:
-                with open(file_path, 'r', encoding=encoding) as f:
-                    f.read(1024)  # Try to read a bit
-                return encoding
-            except:
-                continue
-        return 'utf-8'  # Default fallback
-    
-    def load_csv_safe(self, file_path):
-        """Load CSV with robust error handling"""
-        try:
-            df = self.smart_read_csv(file_path)
-            return df
-        except Exception as e:
-            error_info = {
-                'file': str(file_path),
-                'error': str(e),
-                'size': file_path.stat().st_size if file_path.exists() else 0
-            }
-            self.loading_errors.append(error_info)
-            print(f"Error loading {file_path}: {e}")
-            return None
-    
-    def load_yearly_data(self):
-        """Load all yearly accident data"""
-        all_data = []
-        
-        # Check if we're in deployment (no local data)
-        if not check_local_data():
-            print("No local data found, loading sample data for deployment")
-            self.data = load_sample_data()
-            return self.data
-        
-        for year in range(2015, 2025):
-            year_dir = self.data_dir / str(year)
-            
-            if not year_dir.exists():
-                print(f"Year directory not found: {year_dir}")
-                continue
-            
-            # Try different file patterns
-            patterns = [
-                f"{year}.csv",
-                f"caracteristiques-{year}.csv",
-                f"carct-{year}.csv",
-                f"caract-{year}.csv"
-            ]
-            
-            year_data = None
-            for pattern in patterns:
-                file_path = year_dir / pattern
-                if file_path.exists():
-                    year_data = self.load_csv_safe(file_path)
-                    if year_data is not None:
-                        print(f"Loaded {year} from {pattern}: {len(year_data)} records")
-                        break
-            
-            if year_data is not None:
-                year_data['year'] = year
-                all_data.append(year_data)
-            else:
-                print(f"No data could be loaded for year {year}")
-        
-        if all_data:
-            self.data = pd.concat(all_data, ignore_index=True)
-            print(f"Total records loaded: {len(self.data)}")
-            return self.data
-        else:
-            # Fallback to sample data if no local data found
-            print("No local data found, loading sample data")
-            self.data = load_sample_data()
-            return self.data
-    
-    def load_detailed_tables(self):
-        """Load detailed tables for recent years (2021-2024)"""
-        detailed_data = {}
-        
-        for year in range(2021, 2025):
-            year_dir = self.data_dir / str(year)
-            detailed_data[year] = {}
-            
-            # Table patterns to try
-            table_patterns = {
-                'caracteristiques': [f'caracteristiques-{year}.csv', f'carct-{year}.csv', f'caract-{year}.csv'],
-                'usagers': [f'usagers-{year}.csv'],
-                'lieux': [f'lieux-{year}.csv'],
-                'vehicules': [f'vehicules-{year}.csv']
-            }
-            
-            for table_name, patterns in table_patterns.items():
-                for pattern in patterns:
-                    file_path = year_dir / pattern
-                    if file_path.exists():
-                        df = self.load_csv_safe(file_path)
-                        if df is not None:
-                            detailed_data[year][table_name] = df
-                            print(f"Loaded {year} {table_name}: {len(df)} records")
-                            break
-        
-        return detailed_data
-    
-    def merge_detailed_data(self, detailed_data):
-        """Merge detailed tables by year"""
-        merged_by_year = []
-        
-        for year, tables in detailed_data.items():
-            if not tables:
-                continue
-                
-            # Start with characteristics table
-            if 'caracteristiques' in tables:
-                merged = tables['caracteristiques'].copy()
-                
-                # Add user severity information
-                if 'usagers' in tables:
-                    usagers = tables['usagers']
-                    # Calculate severity statistics per accident
-                    severity_stats = usagers.groupby('Num_Acc').agg({
-                        'grav': ['count', lambda x: (x >= 3).sum(), lambda x: (x == 4).sum()]
-                    }).round(2)
-                    severity_stats.columns = ['total_usagers', 'serious_injuries', 'fatalities']
-                    severity_stats = severity_stats.reset_index()
-                    
-                    merged = merged.merge(severity_stats, on='Num_Acc', how='left')
-                
-                merged['year'] = year
-                merged_by_year.append(merged)
-                print(f"Merged {year}: {len(merged)} records")
-        
-        if merged_by_year:
-            self.merged_data = pd.concat(merged_by_year, ignore_index=True)
-            print(f"Total merged records: {len(self.merged_data)}")
-            return self.merged_data
-        else:
-            return None
-    
-    def preprocess_data(self, df):
-        """Clean and preprocess data"""
-        if df is None:
-            return None
-            
-        df = df.copy()
-        
-        # Standardize column names
-        column_mapping = {
-            'Num_Acc': 'accident_id',
-            'jour': 'day',
-            'mois': 'month', 
-            'an': 'year',
-            'hrmn': 'time',
-            'lum': 'lighting',
-            'dep': 'department',
-            'com': 'commune',
-            'agg': 'localization',
-            'int': 'intersection',
-            'atm': 'weather',
-            'col': 'collision_type',
-            'adr': 'address',
-            'lat': 'latitude',
-            'long': 'longitude'
-        }
-        
-        # Apply mapping where columns exist
-        for old_name, new_name in column_mapping.items():
-            if old_name in df.columns:
-                df[new_name] = df[old_name]
-        
-        # Convert time to hour
-        if 'time' in df.columns:
-            df['hour'] = pd.to_datetime(df['time'], format='%H:%M', errors='coerce').dt.hour
-            df['hour'] = df['hour'].fillna(df['time'].str[:2].astype(float, errors='ignore'))
-        
-        # Create datetime
-        if all(col in df.columns for col in ['year', 'month', 'day']):
-            df['date'] = pd.to_datetime(df[['year', 'month', 'day']], errors='coerce')
-            df['day_of_week'] = df['date'].dt.dayofweek
-        
-        # Create severity target for modeling
-        if 'fatalities' in df.columns:
-            df['has_fatalities'] = (df['fatalities'] > 0).astype(int)
-        elif 'grav' in df.columns:
-            df['has_fatalities'] = (df['grav'] == 4).astype(int)
-        else:
-            df['has_fatalities'] = 0
-        
-        # Create serious accident target
-        if 'serious_injuries' in df.columns and 'fatalities' in df.columns:
-            df['is_serious'] = ((df['serious_injuries'] > 0) | (df['fatalities'] > 0)).astype(int)
-        elif 'grav' in df.columns:
-            df['is_serious'] = (df['grav'] >= 3).astype(int)
-        else:
-            df['is_serious'] = 0
-        
-        return df
-    
-    def get_data(self, data_dir=None):
-        """Get processed data with explicit directory support"""
+        raise RuntimeError(f"Cannot read {fp}")
+
+    # Expected accident columns — at least one must be present to accept a file
+    _ACCIDENT_COLS = {"Num_Acc", "num_acc", "Accident_Id", "accident_id", "jour", "hrmn"}
+
+    def _is_accident_file(self, df):
+        """Return True if df looks like a caracteristiques accident file."""
+        return bool(self._ACCIDENT_COLS & set(df.columns))
+
+    # ── Yearly caracteristiques ───────────────────────────────────────────────
+    def load_yearly(self, data_dir=None):
         if data_dir:
             self.data_dir = Path(data_dir)
-            self.data = None  # Reset cached data
-            self.merged_data = None
-            self.loading_errors = []
-        
-        if self.data is None:
-            self.load_yearly_data()
-        
-        # Try to load detailed data for recent years
-        try:
-            detailed_data = self.load_detailed_tables()
-            if detailed_data:
-                merged_data = self.merge_detailed_data(detailed_data)
-                if merged_data is not None:
-                    processed_merged = self.preprocess_data(merged_data)
-                    return processed_merged, self.loading_errors
-        except Exception as e:
-            print(f"Warning: Failed to load detailed tables: {e}")
-            print("Falling back to basic yearly data...")
-        
-        # Fallback to basic yearly data
-        processed_basic = self.preprocess_data(self.data)
-        return processed_basic, self.loading_errors
-    
-    def get_feature_columns(self, df):
-        """Get columns suitable for modeling"""
+        self.loading_errors = []
+        all_dfs = []
+
+        for year in range(2015, 2025):
+            yr_dir = self.data_dir / str(year)
+            if not yr_dir.exists():
+                continue
+
+            # Specific accident-data patterns first; generic {year}.csv last
+            patterns = [
+                f"carcteristiques-{year}.csv",   # actual spelling used in 2021-2022
+                f"caracteristiques-{year}.csv",  # standard spelling (future-proof)
+                f"caract-{year}.csv",            # abbreviated (2023-2024)
+                f"carct-{year}.csv",
+                f"caracteristiques_{year}.csv",
+                f"{year}.csv",                   # last resort (may be a different file)
+            ]
+
+            loaded = False
+            for pat in patterns:
+                fp = yr_dir / pat
+                if fp.exists():
+                    try:
+                        df = self.smart_read_csv(fp)
+                        if df.shape[1] > 1 and self._is_accident_file(df):
+                            df["year"] = year
+                            all_dfs.append(df)
+                            loaded = True
+                            break
+                    except Exception as e:
+                        self.loading_errors.append({"file": str(fp), "error": str(e)})
+
+            if not loaded:
+                for fp in sorted(yr_dir.glob("*.csv")):
+                    try:
+                        df = self.smart_read_csv(fp)
+                        if df.shape[1] > 3 and self._is_accident_file(df):
+                            df["year"] = year
+                            all_dfs.append(df)
+                            loaded = True
+                            break
+                    except Exception as e:
+                        self.loading_errors.append({"file": str(fp), "error": str(e)})
+
+        return pd.concat(all_dfs, ignore_index=True) if all_dfs else None
+
+    # ── Usagers (gravity per accident) ───────────────────────────────────────
+    def load_usagers(self, data_dir=None):
+        if data_dir:
+            self.data_dir = Path(data_dir)
+        all_dfs = []
+        for year in range(2015, 2025):          # <-- extended to all years
+            yr_dir = self.data_dir / str(year)
+            if not yr_dir.exists():
+                continue
+            for pat in [f"usagers-{year}.csv", f"usagers_{year}.csv", f"usagers{year}.csv"]:
+                fp = yr_dir / pat
+                if fp.exists():
+                    try:
+                        df = self.smart_read_csv(fp)
+                        df["year"] = year
+                        all_dfs.append(df)
+                        break
+                    except Exception as e:
+                        self.loading_errors.append({"file": str(fp), "error": str(e)})
+        return pd.concat(all_dfs, ignore_index=True) if all_dfs else None
+
+    # ── Preprocess ────────────────────────────────────────────────────────────
+    def preprocess(self, df, usagers=None):
         if df is None:
-            return []
-        
-        categorical_features = [
-            'month', 'day_of_week', 'hour', 'department', 'lighting', 
-            'weather', 'intersection', 'collision_type', 'localization'
-        ]
-        
-        numerical_features = [
-            'year'
-        ]
-        
-        available_features = []
-        for feature in categorical_features + numerical_features:
-            if feature in df.columns:
-                available_features.append(feature)
-        
-        return available_features, categorical_features, numerical_features
+            return None
+        df = df.copy()
 
-# Global data loader instance
-_data_loader = None
+        # Standardise column names
+        rename = {
+            "Num_Acc": "accident_id", "num_acc": "accident_id",
+            "Accident_Id": "accident_id",           # 2022 caracteristiques format
+            "jour": "day", "mois": "month", "an": "year_src",
+            "hrmn": "time", "lum": "lighting", "dep": "department",
+            "com": "commune", "agg": "localization", "int": "intersection",
+            "atm": "weather", "col": "collision_type",
+            "lat": "latitude", "long": "longitude",
+        }
+        for old, new in rename.items():
+            if old in df.columns and new not in df.columns:
+                df[new] = df[old]
 
-def get_data_loader():
-    """Get or create data loader instance"""
-    global _data_loader
-    if _data_loader is None:
-        _data_loader = AccidentDataLoader()
-    return _data_loader
+        # ── Merge usagers gravity ─────────────────────────────────────────────
+        if usagers is not None:
+            # Normalise the join key in usagers
+            uid = next((c for c in ["Num_Acc", "num_acc", "accident_id"]
+                        if c in usagers.columns), None)
+            if uid and "accident_id" in df.columns:
+                u = usagers.rename(columns={uid: "accident_id"}).copy()
+                if "grav" in u.columns:
+                    u["grav"] = pd.to_numeric(u["grav"], errors="coerce")
+                    # BAAC format since 2018: grav 1=indemne, 2=tué, 3=blessé hospitalisé, 4=blessé léger
+                    # (older format was: 1=indemne, 2=blessé léger, 3=blessé hospitalisé, 4=tué)
+                    # We detect which format is in use by checking whether grav=2 or grav=4 is rarer
+                    # (fatalities are always fewer than minor injuries)
+                    g_valid = u["grav"].dropna()
+                    new_format = g_valid[g_valid > 0].pipe(
+                        lambda s: s[s == 2].count() < s[s == 4].count()
+                    )
+                    if new_format:
+                        fatal_val, serious_val = 2, 3
+                    else:
+                        fatal_val, serious_val = 4, 3
+                    sev = u.groupby("accident_id").agg(
+                        fatalities       =("grav", lambda x: int((x == fatal_val).sum())),
+                        serious_injuries =("grav", lambda x: int((x == serious_val).sum())),
+                        grav_max         =("grav", "max"),
+                    ).reset_index()
+                    df = df.merge(sev, on="accident_id", how="left")
+
+        # ── Build is_serious target ───────────────────────────────────────────
+        #  Priority order:
+        #  1. merged fatalities / serious_injuries columns
+        #  2. grav column in the caracteristiques file itself
+        #  3. fallback 0 (model will warn user)
+
+        if "fatalities" in df.columns and "serious_injuries" in df.columns:
+            df["is_serious"] = (
+                (df["fatalities"].fillna(0) > 0) |
+                (df["serious_injuries"].fillna(0) > 0)
+            ).astype(int)
+            df["fatalities"]       = df["fatalities"].fillna(0).astype(int)
+            df["serious_injuries"] = df["serious_injuries"].fillna(0).astype(int)
+
+        elif "grav" in df.columns:
+            # grav is in the caracteristiques file (older format or already joined)
+            g = pd.to_numeric(df["grav"], errors="coerce")
+            new_fmt = (g == 2).sum() < (g == 4).sum()
+            if new_fmt:  # 2018+ format: 2=tué, 3=hospitalisé, 4=léger
+                df["is_serious"]       = ((g == 2) | (g == 3)).astype(int)
+                df["fatalities"]       = (g == 2).astype(int)
+                df["serious_injuries"] = (g == 3).astype(int)
+            else:        # old format:   3=hospitalisé, 4=tué
+                df["is_serious"]       = (g >= 3).astype(int)
+                df["fatalities"]       = (g == 4).astype(int)
+                df["serious_injuries"] = (g == 3).astype(int)
+
+        elif "grav_max" in df.columns:
+            g = pd.to_numeric(df["grav_max"], errors="coerce")
+            new_fmt = (g == 2).sum() < (g == 4).sum()
+            if new_fmt:
+                df["is_serious"]       = ((g == 2) | (g == 3)).astype(int)
+                df["fatalities"]       = (g == 2).astype(int)
+                df["serious_injuries"] = (g == 3).astype(int)
+            else:
+                df["is_serious"]       = (g >= 3).astype(int)
+                df["fatalities"]       = (g == 4).astype(int)
+                df["serious_injuries"] = (g == 3).astype(int)
+
+        else:
+            # No gravity column found at all
+            df["is_serious"]       = 0
+            df["fatalities"]       = 0
+            df["serious_injuries"] = 0
+
+        # ── Parse hour ────────────────────────────────────────────────────────
+        if "time" in df.columns:
+            t = df["time"].astype(str).str.strip().str.replace(":", "", regex=False)
+            df["hour"] = pd.to_numeric(t.str[:2], errors="coerce").fillna(0).astype(int)
+            df["hour"] = df["hour"].clip(0, 23)
+
+        # ── Date / day-of-week ────────────────────────────────────────────────
+        if all(c in df.columns for c in ["year", "month", "day"]):
+            df["date"] = pd.to_datetime(
+                dict(
+                    year =pd.to_numeric(df["year"],  errors="coerce"),
+                    month=pd.to_numeric(df["month"], errors="coerce"),
+                    day  =pd.to_numeric(df["day"],   errors="coerce"),
+                ),
+                errors="coerce",
+            )
+            df["day_of_week"] = df["date"].dt.dayofweek
+
+        # ── Clean department ──────────────────────────────────────────────────
+        if "department" in df.columns:
+            df["department"] = (
+                df["department"].astype(str).str.strip()
+                .str.replace(r"\.0$", "", regex=True)
+                .str.zfill(2)
+            )
+
+        return df
+
+    # ── Public entry point ────────────────────────────────────────────────────
+    def get_data(self, data_dir=None):
+        raw     = self.load_yearly(data_dir)
+        usagers = self.load_usagers(data_dir)
+        if raw is None:
+            return None, self.loading_errors
+        processed = self.preprocess(raw, usagers)
+        return processed, self.loading_errors
+
 
 @cache_data
-def load_accident_data(data_dir=None):
-    """Streamlit cached data loading function with directory support"""
-    loader = get_data_loader()
-    return loader.get_data(data_dir)
+def load_accident_data(data_dir: str):
+    loader = AccidentDataLoader(data_dir)
+    return loader.get_data()
 
-def debug_data_directory(data_dir):
-    """Debug function to scan and list all CSV files"""
+
+def debug_data_directory(data_dir: str):
     try:
-        data_path = Path(data_dir)
-        if not data_path.exists():
-            return 0, [f"Directory does not exist: {data_path}"]
-        
-        # Recursively find all CSV files
-        csv_files = list(data_path.rglob("*.csv"))
-        total_count = len(csv_files)
-        
-        # Create preview list (first 30 files)
-        file_preview = []
-        for file_path in csv_files[:30]:
-            relative_path = file_path.relative_to(data_path)
-            size_mb = file_path.stat().st_size / (1024 * 1024)
-            file_preview.append(f"{relative_path} ({size_mb:.1f} MB)")
-        
-        return total_count, file_preview
-        
+        p = Path(data_dir)
+        if not p.exists():
+            return 0, [f"Directory not found: {p}"]
+        csvs   = sorted(p.rglob("*.csv"))
+        preview = [
+            f"{f.relative_to(p)}  ({f.stat().st_size / 1e6:.1f} MB)"
+            for f in csvs[:30]
+        ]
+        return len(csvs), preview
     except Exception as e:
-        return 0, [f"Error scanning directory: {e}"]
+        return 0, [f"Scan error: {e}"]
