@@ -183,7 +183,7 @@ def header(plain, accent, sub):
 # ── Pages ─────────────────────────────────────────────────────────────────────
 
 def page_overview(df):
-    header("Tableau de", "Bord", "France · 2015 – 2024 · Vue d'ensemble")
+    header("Tableau de", "Bord", "France · 2021 – 2024 · Vue d'ensemble")
 
     if df is None or len(df) == 0:
         st.markdown('<div class="err">Aucune donnée chargée.</div>', unsafe_allow_html=True)
@@ -599,22 +599,34 @@ def page_about():
     st.markdown("""
 <div style="max-width:680px;line-height:1.9;color:#64748b;font-size:0.88rem">
 <p><strong style="color:#94a3b8">Source.</strong>
-Base nationale d'accidentologie routiere francaise 2015-2024, Ministere de l'Interieur.
-Les tables caracteristiques, usagers, lieux et vehicules sont fusionnees pour reconstituer
-le profil complet de chaque accident.</p>
+Base nationale d'accidentologie routiere francaise (BAAC) 2021–2024, Ministere de l'Interieur.
+Les tables caracteristiques et usagers sont fusionnees par identifiant d'accident pour
+reconstituer le profil de gravite de chaque accident. Couverture : ~221 000 accidents
+corporels sur quatre annees.</p>
 
 <p style="margin-top:1rem"><strong style="color:#94a3b8">Pipeline.</strong>
 Chargement multi-format (separateurs ; / , , encodages UTF-8/Latin-1), standardisation
-des colonnes, extraction temporelle, fusion des niveaux de gravite (grav >= 3 = accident grave).
-Split temporel strict : entrainement 2019-2023, evaluation 2024.</p>
+des colonnes, extraction temporelle, detection automatique du format de gravite BAAC
+(depuis 2018 : grav 2 = tue, 3 = blesse hospitalise, 4 = blesse leger).
+Split temporel strict : entrainement 2021–2023, evaluation 2024.</p>
+
+<p style="margin-top:1rem"><strong style="color:#94a3b8">Ce que le modele predit.</strong>
+Le modele estime la probabilite qu'un accident soit grave <em>conditionnellement au fait
+qu'un accident s'est produit</em>. Il ne predit pas la probabilite d'occurrence d'un
+accident. La cible binaire "grave" regroupe les accidents avec au moins un tue ou un
+blesse hospitalise (grav 2 ou 3 dans le format BAAC post-2018).</p>
 
 <p style="margin-top:1rem"><strong style="color:#94a3b8">Modele.</strong>
 Random Forest (100 arbres, profondeur max 10, poids equilibres entre classes).
-Variables : mois, heure, jour de la semaine, departement, meteo, eclairage.</p>
+Variables : mois, heure, jour de la semaine, departement, meteo, eclairage,
+type d'intersection, type de collision, localisation.</p>
 
 <p style="margin-top:1rem"><strong style="color:#94a3b8">Limites.</strong>
-Estimations statistiques sur donnees historiques uniquement. Usage analytique et
-pedagogique — ne pas utiliser pour des decisions de securite en temps reel.</p>
+Le jeu de variables est restreint aux informations disponibles dans la table
+caracteristiques (pas de vitesse, pas de profil conducteur). Les estimations sont
+des moyennes statistiques sur donnees historiques — elles ne refletent pas les
+conditions reelles au moment de la prediction.
+Usage analytique et pedagogique uniquement.</p>
 
 <p style="margin-top:1rem"><strong style="color:#94a3b8">Stack.</strong>
 Python · Streamlit · Pandas · Scikit-learn · Plotly</p>
