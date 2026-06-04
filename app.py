@@ -431,7 +431,7 @@ def page_filters(df):
 
 
 def page_prediction(df):
-    header("Prediction de", "Risque", "Modele Random Forest · Estimation statistique")
+    header("Gravite", "Conditionnelle", "Modele Random Forest · P(grave | accident survenu)")
 
     st.markdown(
         '<div class="warn">Outil statistique base sur des donnees historiques. '
@@ -529,7 +529,7 @@ def page_prediction(df):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    if st.button("Calculer le risque", type="primary"):
+    if st.button("Estimer la gravite conditionnelle", type="primary"):
         try:
             pred = predict_accident_risk({
                 "year": 2024, "month": sel_month, "day_of_week": sel_dow,
@@ -576,8 +576,8 @@ def page_prediction(df):
             with cm:
                 st.markdown("<br>", unsafe_allow_html=True)
                 for label, val, color in [
-                    ("Probabilite d'accident grave", f"{rp:.1f}%", "#a5b4fc"),
-                    ("Niveau de risque", risk_label, risk_color),
+                    ("P(grave | accident) — gravite conditionnelle", f"{rp:.1f}%", "#a5b4fc"),
+                    ("Niveau de gravite", risk_label, risk_color),
                 ]:
                     st.markdown(
                         f"""<div style="background:rgba(255,255,255,0.02);border:1px solid
@@ -667,7 +667,7 @@ def main():
         page = st.radio("nav", [
             "Vue d'ensemble",
             "Exploration filtree",
-            "Prediction de risque",
+            "Gravite conditionnelle",
             "A propos",
         ], label_visibility="collapsed")
 
@@ -700,7 +700,7 @@ def main():
         page_overview(df)
     elif page == "Exploration filtree":
         page_filters(df)
-    elif page == "Prediction de risque":
+    elif page == "Gravite conditionnelle":
         page_prediction(df)
     else:
         page_about()
