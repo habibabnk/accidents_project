@@ -14,8 +14,12 @@ venv.bak/
 .ipynb_checkpoints
 
 # Data files (too large for GitHub)
-20**/*.csv
-data/
+# Full BAAC year directories — download with download_data.py
+20[0-9][0-9]/
+# Parquet cache
+data/*.parquet
+# Keep data/sample/ committed (small demo subset)
+
 
 # IDE
 .vscode/

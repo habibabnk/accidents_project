@@ -24,9 +24,13 @@ class AccidentDataLoader:
             Path.cwd(),
             Path.cwd() / "accidents_project",
         ]:
-            if any((candidate / str(y)).exists() for y in range(2015, 2025)):
+            if any((candidate / str(y)).exists() for y in range(2021, 2025)):
                 return candidate
         return Path(__file__).parent
+
+    def _has_full_data(self):
+        """Return True if at least one BAAC year directory exists."""
+        return any((self.data_dir / str(y)).exists() for y in range(2021, 2025))
 
     # ── CSV reader ────────────────────────────────────────────────────────────
     def smart_read_csv(self, fp):
@@ -243,12 +247,51 @@ class AccidentDataLoader:
 
     # ── Public entry point ────────────────────────────────────────────────────
     def get_data(self, data_dir=None):
+        if data_dir:
+            self.data_dir = Path(data_dir)
+
+        # Fall back to bundled sample when no full BAAC data is present
+        if not self._has_full_data():
+            sample_dir = Path(__file__).parent / "data" / "sample"
+            if sample_dir.exists():
+                self.loading_errors.append({
+                    "file": str(sample_dir),
+                    "error": "SAMPLE MODE — full data not found; run download_data.py to fetch 2021-2024 CSVs",
+                })
+                raw     = self._load_sample(sample_dir)
+                usagers = self._load_sample_usagers(sample_dir)
+                if raw is None:
+                    return None, self.loading_errors
+                return self.preprocess(raw, usagers), self.loading_errors
+
         raw     = self.load_yearly(data_dir)
         usagers = self.load_usagers(data_dir)
         if raw is None:
             return None, self.loading_errors
         processed = self.preprocess(raw, usagers)
         return processed, self.loading_errors
+
+    def _load_sample(self, sample_dir):
+        dfs = []
+        for fp in sorted(Path(sample_dir).glob("caract*.csv")):
+            try:
+                df = self.smart_read_csv(fp)
+                if self._is_accident_file(df):
+                    df["year"] = 2024
+                    dfs.append(df)
+            except Exception as e:
+                self.loading_errors.append({"file": str(fp), "error": str(e)})
+        return pd.concat(dfs, ignore_index=True) if dfs else None
+
+    def _load_sample_usagers(self, sample_dir):
+        dfs = []
+        for fp in sorted(Path(sample_dir).glob("usagers*.csv")):
+            try:
+                df = self.smart_read_csv(fp)
+                dfs.append(df)
+            except Exception as e:
+                self.loading_errors.append({"file": str(fp), "error": str(e)})
+        return pd.concat(dfs, ignore_index=True) if dfs else None
 
 
 @cache_data
