@@ -245,6 +245,38 @@ class AccidentDataLoader:
 
         return df
 
+    # ── Parquet cache helpers ─────────────────────────────────────────────────
+    def _cache_path(self):
+        return Path(__file__).parent / "data" / "accidents_cache.parquet"
+
+    def _cache_is_fresh(self):
+        cp = self._cache_path()
+        if not cp.exists():
+            return False
+        cache_mtime = cp.stat().st_mtime
+        for year in range(2021, 2025):
+            yr_dir = self.data_dir / str(year)
+            if not yr_dir.exists():
+                continue
+            for fp in yr_dir.glob("*.csv"):
+                if fp.stat().st_mtime > cache_mtime:
+                    return False
+        return True
+
+    def _read_cache(self):
+        try:
+            return pd.read_parquet(self._cache_path())
+        except Exception:
+            return None
+
+    def _write_cache(self, df):
+        try:
+            cp = self._cache_path()
+            cp.parent.mkdir(parents=True, exist_ok=True)
+            df.to_parquet(cp, index=False)
+        except Exception:
+            pass  # caching is best-effort
+
     # ── Public entry point ────────────────────────────────────────────────────
     def get_data(self, data_dir=None):
         if data_dir:
@@ -264,11 +296,18 @@ class AccidentDataLoader:
                     return None, self.loading_errors
                 return self.preprocess(raw, usagers), self.loading_errors
 
+        # Use parquet cache when available and up-to-date
+        if self._cache_is_fresh():
+            cached = self._read_cache()
+            if cached is not None:
+                return cached, self.loading_errors
+
         raw     = self.load_yearly(data_dir)
         usagers = self.load_usagers(data_dir)
         if raw is None:
             return None, self.loading_errors
         processed = self.preprocess(raw, usagers)
+        self._write_cache(processed)
         return processed, self.loading_errors
 
     def _load_sample(self, sample_dir):
